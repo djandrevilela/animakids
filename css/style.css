@@ -113,6 +113,8 @@ h1, h2, h3, .brand-font {
 .sync-pill.synced { background: rgba(147, 196, 125, 0.35); }
 .sync-pill.syncing { background: rgba(255, 217, 102, 0.35); }
 .sync-pill.error { background: rgba(224, 102, 102, 0.4); }
+.sync-pill.syncing #syncStatusIcon { animation: ak-spin 0.9s linear infinite; display: inline-block; }
+@keyframes ak-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .app-main {
   flex: 1;

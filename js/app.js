@@ -231,18 +231,22 @@
     if (status === "off") {
       syncStatusIcon.className = "bi bi-cloud-slash";
       syncStatusText.textContent = "Local";
+      syncStatusBtn.title = "Toca para configurar a sincronização";
     } else if (status === "syncing") {
       syncStatusBtn.classList.add("syncing");
       syncStatusIcon.className = "bi bi-arrow-repeat";
       syncStatusText.textContent = "A sincronizar…";
+      syncStatusBtn.title = "A sincronizar…";
     } else if (status === "synced") {
       syncStatusBtn.classList.add("synced");
       syncStatusIcon.className = "bi bi-cloud-check";
       syncStatusText.textContent = "Sincronizado";
+      syncStatusBtn.title = "Toca para sincronizar agora";
     } else if (status === "error") {
       syncStatusBtn.classList.add("error");
       syncStatusIcon.className = "bi bi-exclamation-triangle";
       syncStatusText.textContent = "Erro";
+      syncStatusBtn.title = "Falhou — toca para tentar novamente";
     }
     renderSyncStatusBlock();
   }
@@ -290,7 +294,26 @@
   }
 
   async function syncPull(cfg) { return syncPullPath(cfg, DATA_FILE_PATH); }
-  async function syncPush(cfg, sha) { return syncPushPath(cfg, DATA_FILE_PATH, STATE, sha); }
+
+  // Push with automatic retry on SHA conflicts (409 "does not match ...sha"):
+  // this happens when the remote file changed since we last read it (e.g. two
+  // syncs overlapping, or another device pushed first). We just re-read the
+  // current sha and retry, up to a few times, before giving up.
+  async function pushWithRetry(cfg, path, dataFn, sha, attempt) {
+    attempt = attempt || 1;
+    try {
+      return await syncPushPath(cfg, path, dataFn(), sha);
+    } catch (err) {
+      const isShaConflict = /does not match|sha/i.test(err.message) && attempt <= 3;
+      if (!isShaConflict) throw err;
+      const fresh = await syncPullPath(cfg, path);
+      return pushWithRetry(cfg, path, dataFn, fresh.sha, attempt + 1);
+    }
+  }
+
+  async function syncPush(cfg, sha) {
+    return pushWithRetry(cfg, DATA_FILE_PATH, () => STATE, sha);
+  }
 
   async function syncRoster(cfg, showToast) {
     try {
@@ -300,10 +323,10 @@
         ROSTER = remote.roster;
         saveRosterCache(ROSTER);
       } else if (localHasNames) {
-        await syncPushPath(cfg, ROSTER_FILE_PATH, {
+        await pushWithRetry(cfg, ROSTER_FILE_PATH, () => ({
           roster: ROSTER,
           note: "Ficheiro PRIVADO — nomes reais das atletas. Nunca colocar no repositório público.",
-        }, sha);
+        }), sha);
       }
     } catch (err) {
       console.error("[AnimaKids roster sync]", err);
@@ -311,12 +334,23 @@
     }
   }
 
+  // Serialize sync calls: if one is already running, queue at most one
+  // follow-up run instead of letting two overlap (that's what was causing
+  // the SHA-conflict errors — two syncs reading/writing the file at once).
+  let syncInFlight = false;
+  let syncQueued = null; // holds the `showToast` value of the queued run, if any
+
   async function syncNow(showToast) {
+    if (syncInFlight) {
+      syncQueued = showToast || syncQueued;
+      return;
+    }
     const cfg = loadSyncConfig();
     if (!cfg || !cfg.repo || !cfg.token) {
       setSyncStatus("off");
       return;
     }
+    syncInFlight = true;
     setSyncStatus("syncing");
     try {
       const { remote, sha } = await syncPull(cfg);
@@ -334,6 +368,13 @@
       console.error("[AnimaKids sync]", err);
       setSyncStatus("error");
       if (showToast) toast("Falha na sincronização: " + err.message);
+    } finally {
+      syncInFlight = false;
+      if (syncQueued !== null) {
+        const nextToast = syncQueued;
+        syncQueued = null;
+        syncNow(nextToast);
+      }
     }
   }
 
@@ -376,7 +417,16 @@
     toast("Sincronização desligada neste dispositivo.");
   });
 
-  syncStatusBtn.addEventListener("click", () => openModal());
+  // Tap the pill to sync/retry immediately. If sync isn't configured yet,
+  // open the settings modal instead (nothing to sync/retry).
+  syncStatusBtn.addEventListener("click", () => {
+    const cfg = loadSyncConfig();
+    if (!cfg || !cfg.repo || !cfg.token) {
+      openModal();
+    } else {
+      syncNow(true);
+    }
+  });
 
   // ------------------------------------------------------------------
   // Roster editor (private real names)
@@ -412,10 +462,10 @@
     if (cfg && cfg.repo && cfg.token) {
       try {
         const { sha } = await syncPullPath(cfg, ROSTER_FILE_PATH);
-        await syncPushPath(cfg, ROSTER_FILE_PATH, {
+        await pushWithRetry(cfg, ROSTER_FILE_PATH, () => ({
           roster: ROSTER,
           note: "Ficheiro PRIVADO — nomes reais das atletas. Nunca colocar no repositório público.",
-        }, sha);
+        }), sha);
         toast("Nomes também enviados para o repositório privado.");
       } catch (err) {
         console.error("[AnimaKids roster save]", err);

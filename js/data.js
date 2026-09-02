@@ -293,7 +293,7 @@ const ANIMAKIDS_DATA = {
           "alongamento": "Flexibilidade",
           "micro": "Trampolins",
           "formato": "Circuito Geral",
-          "ginastica": "Circuito Geral: Mini-trampolim (Extensão - Engrupado) -> plinto baixo (Coelho) -> colchão (rolamento de segurança).",
+          "ginastica": "Circuito Geral: Mini-trampolim (Extensão - Engrupado) -> plinto baixo (Coelho) -> colchão (rolamento de segurança); 2-3 voltas completas.",
           "fase": "Fase 1 - Adaptação e Fundamentos",
           "faseKey": "1"
         },
@@ -326,7 +326,7 @@ const ANIMAKIDS_DATA = {
           "alongamento": "Flexibilidade",
           "micro": "Trampolins",
           "formato": "Circuito Geral",
-          "ginastica": "Circuito Geral: Mini-trampolim (saltos base) -> plinto (Coelho Eixo) -> plano inclinado (cambalhota) -> regresso à fila.",
+          "ginastica": "Circuito Geral: Mini-trampolim (saltos base) -> plinto (Coelho Eixo) -> plano inclinado (cambalhota) -> regresso à fila; repetir 2-3 voltas por níveis.",
           "fase": "Fase 2 - Desenvolvimento",
           "faseKey": "2"
         },
