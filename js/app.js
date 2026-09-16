@@ -17,6 +17,25 @@
   const PERIODS = ANIMAKIDS_DATA.periods;
   const PHASES = ANIMAKIDS_DATA.phases;
 
+  const MOVEKIDS_ATHLETES = MOVEKIDS_DATA.athletes;
+  const MOVEKIDS_PERIODS = MOVEKIDS_DATA.periods;
+
+  // ------------------------------------------------------------------
+  // Classes disponíveis na vista Presenças. Cada classe tem os seus
+  // próprios códigos de atleta (prefixo único, nunca colide entre
+  // classes) e os seus próprios períodos/treinos. Só a AnimaKids tem
+  // vista de Plano de Treino, por isso só ela mostra o aviso "marcado
+  // como realizado no Plano" — a MoveKids mostra em vez disso se já
+  // há presenças registadas nesse treino.
+  // ------------------------------------------------------------------
+  const PRES_CLASSES = [
+    { key: "animakids", label: "AnimaKids", athletes: ATHLETES, periods: PERIODS, hasPlano: true },
+    { key: "movekids", label: "MoveKids", athletes: MOVEKIDS_ATHLETES, periods: MOVEKIDS_PERIODS, hasPlano: false },
+  ];
+  function presClass(key) {
+    return PRES_CLASSES.find((c) => c.key === key) || PRES_CLASSES[0];
+  }
+
   // ------------------------------------------------------------------
   // ROSTER (real names) — kept OUT of the public data.js on purpose.
   // ATHLETES only contains anonymous codes (A01, A02, ...), safe for a
@@ -35,8 +54,7 @@
 
   function displayName(code) {
     if (ROSTER[code]) return ROSTER[code];
-    const n = parseInt(String(code).replace(/^A0*/, ""), 10);
-    return "Atleta " + (isNaN(n) ? code : n);
+    return "Atleta " + code;
   }
 
   const CAT_CLASS = {
@@ -439,10 +457,15 @@
 
   function renderRosterFields() {
     const host = document.getElementById("rosterFields");
-    host.innerHTML = ATHLETES.map((code) => `
-      <div class="input-group input-group-sm">
-        <span class="input-group-text" style="min-width:56px;">${escapeHtml(code)}</span>
-        <input type="text" class="form-control" data-code="${escapeHtml(code)}" value="${escapeHtml(ROSTER[code] || "")}" placeholder="Nome real (opcional)">
+    host.innerHTML = PRES_CLASSES.map((cls) => `
+      <div class="roster-class-group">
+        <div class="roster-class-label">${escapeHtml(cls.label)}</div>
+        ${cls.athletes.map((code) => `
+          <div class="input-group input-group-sm mb-1">
+            <span class="input-group-text" style="min-width:56px;">${escapeHtml(code)}</span>
+            <input type="text" class="form-control" data-code="${escapeHtml(code)}" value="${escapeHtml(ROSTER[code] || "")}" placeholder="Nome real (opcional)">
+          </div>
+        `).join("")}
       </div>
     `).join("");
   }
@@ -493,14 +516,41 @@
   settingsModal.addEventListener("click", (e) => { if (e.target === settingsModal) closeModal(); });
   document.getElementById("navSettingsBtn").addEventListener("click", openModal);
 
-  document.getElementById("exportBtn").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(STATE, null, 2)], { type: "application/json" });
+  // ------------------------------------------------------------------
+  // Guardar / partilhar um ficheiro gerado no dispositivo. Um simples
+  // <a download> clicado por JS é ignorado, em silêncio, em muitos
+  // browsers quando a app corre em modo standalone (instalada com
+  // "Adicionar ao ecrã principal") — é por isso que a exportação
+  // funcionava no browser mas não na "App". Quando a Web Share API
+  // consegue partilhar ficheiros, usamos a folha de partilha nativa
+  // (que sabe gravar em Ficheiros/Downloads mesmo em modo standalone);
+  // caso contrário, usamos o link de download clássico.
+  // ------------------------------------------------------------------
+  async function saveOrShareFile(blob, filename, mimeType) {
+    try {
+      const file = new File([blob], filename, { type: mimeType });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        return true;
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") return false; // utilizador cancelou a partilha
+      // qualquer outro erro na partilha: tenta na mesma o download clássico abaixo
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "animakids-state.json";
+    a.download = filename;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return true;
+  }
+
+  document.getElementById("exportBtn").addEventListener("click", async () => {
+    const blob = new Blob([JSON.stringify(STATE, null, 2)], { type: "application/json" });
+    await saveOrShareFile(blob, "animakids-state.json", "application/json");
   });
 
   // ------------------------------------------------------------------
@@ -513,76 +563,84 @@
   const MESES_ABR = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"];
   const DIAS_ABR = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
-  function exportPresencasExcel() {
+  async function exportPresencasExcel() {
     if (typeof XLSX === "undefined") { toast("Biblioteca de Excel não carregou. Verifica a ligação à internet."); return; }
     if (Object.keys(ROSTER).length === 0) {
       toast("Aviso: sem nomes reais carregados — o Excel vai sair com códigos (Atleta A01…). Preenche os nomes em Mais → Nomes reais.");
     }
     const wb = XLSX.utils.book_new();
-    const monthMap = {};
-    PERIODS.forEach((p) => p.sessions.forEach((s) => {
-      const d = new Date(s.date + "T00:00:00");
-      const key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
-      if (!monthMap[key]) monthMap[key] = { year: d.getFullYear(), month: d.getMonth(), periodId: p.id, dates: [] };
-      monthMap[key].dates.push(s.date);
-    }));
 
-    Object.keys(monthMap).sort().forEach((key) => {
-      const info = monthMap[key];
-      const daysInMonth = new Date(info.year, info.month + 1, 0).getDate();
-      const trainingDatesSet = new Set(info.dates);
-      const sheetName = MESES_ABR[info.month] + String(info.year).slice(2);
+    // One set of sheets per classe (AnimaKids, MoveKids, ...), prefixadas
+    // para nunca colidir nomes de folha entre classes no mesmo mês.
+    PRES_CLASSES.forEach((cls) => {
+      const prefix = cls.key.slice(0, 2).toUpperCase();
+      const monthMap = {};
+      cls.periods.forEach((p) => p.sessions.forEach((s) => {
+        const d = new Date(s.date + "T00:00:00");
+        const key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+        if (!monthMap[key]) monthMap[key] = { year: d.getFullYear(), month: d.getMonth(), periodId: p.id, dates: [] };
+        monthMap[key].dates.push(s.date);
+      }));
 
-      const aoa = [];
-      aoa.push(["AnimaKids — Presenças"]);
-      aoa.push(["Mês:", MESES_PT[info.month], "", "Ano:", info.year]);
-      aoa.push([]);
-      const header = ["Nº", "Nome", "Presente", "Justificou", "Faltou"];
-      for (let day = 1; day <= daysInMonth; day++) header.push(day);
-      aoa.push(header);
-      const weekdayRow = ["", "", "", "", ""];
-      for (let day = 1; day <= daysInMonth; day++) {
-        weekdayRow.push(DIAS_ABR[new Date(info.year, info.month, day).getDay()]);
-      }
-      aoa.push(weekdayRow);
+      Object.keys(monthMap).sort().forEach((key) => {
+        const info = monthMap[key];
+        const daysInMonth = new Date(info.year, info.month + 1, 0).getDate();
+        const trainingDatesSet = new Set(info.dates);
+        const sheetName = (prefix + "-" + MESES_ABR[info.month] + String(info.year).slice(2)).slice(0, 31);
 
-      ATHLETES.forEach((athlete, idx) => {
-        const row = [idx + 1, displayName(athlete), null, null, null];
+        const aoa = [];
+        aoa.push([cls.label + " — Presenças"]);
+        aoa.push(["Mês:", MESES_PT[info.month], "", "Ano:", info.year]);
+        aoa.push([]);
+        const header = ["Nº", "Nome", "Presente", "Justificou", "Faltou"];
+        for (let day = 1; day <= daysInMonth; day++) header.push(day);
+        aoa.push(header);
+        const weekdayRow = ["", "", "", "", ""];
         for (let day = 1; day <= daysInMonth; day++) {
-          const iso = `${info.year}-${String(info.month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-          if (trainingDatesSet.has(iso)) {
-            const val = getAttendance(info.periodId, iso, athlete);
-            row.push(val === "Presente" ? "P" : val === "Justificou" ? "J" : val === "Faltou" ? "F" : "");
-          } else {
-            row.push("");
-          }
+          weekdayRow.push(DIAS_ABR[new Date(info.year, info.month, day).getDay()]);
         }
-        aoa.push(row);
+        aoa.push(weekdayRow);
+
+        cls.athletes.forEach((athlete, idx) => {
+          const row = [idx + 1, displayName(athlete), null, null, null];
+          for (let day = 1; day <= daysInMonth; day++) {
+            const iso = `${info.year}-${String(info.month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            if (trainingDatesSet.has(iso)) {
+              const val = getAttendance(info.periodId, iso, athlete);
+              row.push(val === "Presente" ? "P" : val === "Justificou" ? "J" : val === "Faltou" ? "F" : "");
+            } else {
+              row.push("");
+            }
+          }
+          aoa.push(row);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const firstDataRowIndex = 5; // 0-based
+        const lastColIndex = 4 + daysInMonth; // 0-based
+        const firstDayColLetter = XLSX.utils.encode_col(5);
+        const lastDayColLetter = XLSX.utils.encode_col(lastColIndex);
+
+        cls.athletes.forEach((athlete, idx) => {
+          const r = firstDataRowIndex + idx;
+          const excelRow = r + 1;
+          const rangeRef = `${firstDayColLetter}${excelRow}:${lastDayColLetter}${excelRow}`;
+          ws[XLSX.utils.encode_cell({ r, c: 2 })] = { t: "n", f: `COUNTIF(${rangeRef},"P")` };
+          ws[XLSX.utils.encode_cell({ r, c: 3 })] = { t: "n", f: `COUNTIF(${rangeRef},"J")` };
+          ws[XLSX.utils.encode_cell({ r, c: 4 })] = { t: "n", f: `COUNTIF(${rangeRef},"F")` };
+        });
+
+        ws["!cols"] = [{ wch: 4 }, { wch: 30 }, { wch: 9 }, { wch: 10 }, { wch: 8 }]
+          .concat(Array(daysInMonth).fill({ wch: 4 }));
+
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
       });
-
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const firstDataRowIndex = 5; // 0-based
-      const lastColIndex = 4 + daysInMonth; // 0-based
-      const firstDayColLetter = XLSX.utils.encode_col(5);
-      const lastDayColLetter = XLSX.utils.encode_col(lastColIndex);
-
-      ATHLETES.forEach((athlete, idx) => {
-        const r = firstDataRowIndex + idx;
-        const excelRow = r + 1;
-        const rangeRef = `${firstDayColLetter}${excelRow}:${lastDayColLetter}${excelRow}`;
-        ws[XLSX.utils.encode_cell({ r, c: 2 })] = { t: "n", f: `COUNTIF(${rangeRef},"P")` };
-        ws[XLSX.utils.encode_cell({ r, c: 3 })] = { t: "n", f: `COUNTIF(${rangeRef},"J")` };
-        ws[XLSX.utils.encode_cell({ r, c: 4 })] = { t: "n", f: `COUNTIF(${rangeRef},"F")` };
-      });
-
-      ws["!cols"] = [{ wch: 4 }, { wch: 30 }, { wch: 9 }, { wch: 10 }, { wch: 8 }]
-        .concat(Array(daysInMonth).fill({ wch: 4 }));
-
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
 
-    XLSX.writeFile(wb, "AnimaKids_Presencas.xlsx");
-    toast("Excel de presenças exportado.");
+    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const ok = await saveOrShareFile(blob, "Presencas_AnimaKids_MoveKids.xlsx", blob.type);
+    if (ok) toast("Excel de presenças exportado.");
   }
 
   document.getElementById("exportExcelBtn").addEventListener("click", exportPresencasExcel);
@@ -889,13 +947,31 @@
   // ==================================================================
   // VIEW: PRESENÇAS
   // ==================================================================
-  let presPeriodId = PERIODS[0].id;
-  let presDateIso = PERIODS[0].sessions[0].date;
 
-  function findNextSessionRef(periodIdFilter) {
+  // Preserve scroll position across re-renders triggered by a tap inside
+  // a view. Presenças (and now Totais) fully replace their list's
+  // innerHTML on every tap; the clicked button gets removed from the DOM
+  // and re-created, and some browsers respond by moving focus back to
+  // <body> and auto-scrolling the page to the top. We save the scroll
+  // position beforehand and restore it right after (and again on the
+  // next frame, to win against that auto-scroll).
+  function withScrollPreserved(fn) {
+    const mainEl = document.getElementById("appMain");
+    const y = window.scrollY;
+    const mainY = mainEl ? mainEl.scrollTop : 0;
+    fn();
+    window.scrollTo(0, y);
+    if (mainEl) mainEl.scrollTop = mainY;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, y);
+      if (mainEl) mainEl.scrollTop = mainY;
+    });
+  }
+
+  function findNextSessionRef(periods, periodIdFilter) {
     const today = todayIso();
     let flat = [];
-    PERIODS.forEach((p) => {
+    periods.forEach((p) => {
       if (periodIdFilter && p.id !== periodIdFilter) return;
       p.sessions.forEach((s) => flat.push({ periodId: p.id, date: s.date }));
     });
@@ -903,54 +979,144 @@
     return flat.find((s) => s.date >= today) || flat[flat.length - 1];
   }
 
-  // default: open on the next upcoming training (or the last one, if the season is over)
-  (function initPresencasDefault() {
-    const next = findNextSessionRef(null);
-    if (next) { presPeriodId = next.periodId; presDateIso = next.date; }
-  })();
+  function classAllSessionsFlat(cls) {
+    let flat = [];
+    cls.periods.forEach((p) => p.sessions.forEach((s) => flat.push({ periodId: p.id, date: s.date })));
+    flat.sort((a, b) => a.date.localeCompare(b.date));
+    return flat;
+  }
 
-  function renderPresencasTabs() {
+  // Has any attendance been recorded, for any athlete of this class, on
+  // this session? Used as the "done" checkmark for classes without a
+  // Plano de Treino (e.g. MoveKids) to mirror in AnimaKids.
+  function sessionHasAttendance(cls, periodId, dateIso) {
+    return cls.athletes.some((a) => !!getAttendance(periodId, dateIso, a));
+  }
+
+  // How many of the most recent *recorded* sessions in a row (up to
+  // today, across all periods of the class) this athlete has NOT been
+  // marked "Presente" in. Sessions with no attendance taken yet are
+  // skipped (we simply don't know), and the streak stops as soon as a
+  // "Presente" is found going backwards in time.
+  function attendanceGap(cls, athlete) {
+    const today = todayIso();
+    const flat = classAllSessionsFlat(cls).filter((s) => s.date <= today);
+    let streak = 0;
+    for (let i = flat.length - 1; i >= 0; i--) {
+      const val = getAttendance(flat[i].periodId, flat[i].date, athlete);
+      if (!val) continue;
+      if (val === "Presente") break;
+      streak++;
+    }
+    return { streak };
+  }
+
+  function attendanceWarnHtml(cls, athlete) {
+    const gap = attendanceGap(cls, athlete);
+    return gap.streak > 4
+      ? `<div class="att-warn"><i class="bi bi-exclamation-triangle-fill"></i> não vem há ${gap.streak} treinos</div>`
+      : "";
+  }
+
+  let presClassKey = "animakids";
+  let presMode = "marcar"; // marcar | totais
+  const presSelByClass = {}; // { [classKey]: { periodId, dateIso } }
+
+  // default per class: open on the next upcoming training (or the last
+  // one, if the season for that class is already over)
+  PRES_CLASSES.forEach((cls) => {
+    const next = findNextSessionRef(cls.periods, null);
+    presSelByClass[cls.key] = next
+      ? { periodId: next.periodId, dateIso: next.date }
+      : { periodId: cls.periods[0].id, dateIso: cls.periods[0].sessions[0].date };
+  });
+
+  function renderPresencas() {
+    const cls = presClass(presClassKey);
+    const sel = presSelByClass[cls.key];
+
+    const classTabsHost = document.getElementById("presencasClassTabs");
+    classTabsHost.innerHTML = PRES_CLASSES.map((c) => `
+      <button type="button" class="btn btn-outline-secondary ${c.key === presClassKey ? "active" : ""}" data-class="${c.key}">${escapeHtml(c.label)}</button>
+    `).join("");
+    classTabsHost.querySelectorAll("button").forEach((b) => {
+      b.addEventListener("click", () => {
+        if (b.dataset.class === presClassKey) return;
+        withScrollPreserved(() => { presClassKey = b.dataset.class; renderPresencas(); });
+      });
+    });
+
+    const modeTabsHost = document.getElementById("presencasModeTabs");
+    modeTabsHost.innerHTML = `
+      <button type="button" class="btn btn-outline-secondary ${presMode === "marcar" ? "active" : ""}" data-mode="marcar">Marcar presenças</button>
+      <button type="button" class="btn btn-outline-secondary ${presMode === "totais" ? "active" : ""}" data-mode="totais">Total</button>
+    `;
+    modeTabsHost.querySelectorAll("button").forEach((b) => {
+      b.addEventListener("click", () => {
+        if (b.dataset.mode === presMode) return;
+        withScrollPreserved(() => { presMode = b.dataset.mode; renderPresencas(); });
+      });
+    });
+
+    document.getElementById("presencasMarcarSection").classList.toggle("d-none", presMode !== "marcar");
+    document.getElementById("presencasTotaisSection").classList.toggle("d-none", presMode !== "totais");
+
+    if (presMode === "marcar") renderPresencasMarcar(cls, sel);
+    else renderPresencasTotais(cls);
+  }
+
+  function renderPresencasMarcar(cls, sel) {
     const host = document.getElementById("presencasPeriodTabs");
-    host.innerHTML = PERIODS.map((p) => `
-      <button type="button" class="btn btn-outline-secondary ${p.id === presPeriodId ? "active" : ""}" data-period="${p.id}">${escapeHtml(p.label)}</button>
+    host.innerHTML = cls.periods.map((p) => `
+      <button type="button" class="btn btn-outline-secondary ${p.id === sel.periodId ? "active" : ""}" data-period="${p.id}">${escapeHtml(p.label)}</button>
     `).join("");
     host.querySelectorAll("button").forEach((b) => {
       b.addEventListener("click", () => {
-        presPeriodId = b.dataset.period;
-        const next = findNextSessionRef(presPeriodId);
-        presDateIso = next ? next.date : PERIODS.find((p) => p.id === presPeriodId).sessions[0].date;
-        renderPresencas();
+        withScrollPreserved(() => {
+          sel.periodId = b.dataset.period;
+          const next = findNextSessionRef(cls.periods, sel.periodId);
+          sel.dateIso = next ? next.date : cls.periods.find((p) => p.id === sel.periodId).sessions[0].date;
+          renderPresencas();
+        });
       });
     });
-  }
 
-  function renderPresencas() {
-    renderPresencasTabs();
-    const period = PERIODS.find((p) => p.id === presPeriodId);
+    const period = cls.periods.find((p) => p.id === sel.periodId);
     const datePicker = document.getElementById("presencasDatePicker");
     datePicker.innerHTML = period.sessions.map((s) => {
-      const done = getCompleted(period.id, s.date);
-      return `<button type="button" class="picker-chip ${s.date === presDateIso ? "active" : ""}" data-date="${s.date}">${done ? "✅ " : ""}${fmtDateShort(s.date)}</button>`;
+      const done = cls.hasPlano ? getCompleted(period.id, s.date) : sessionHasAttendance(cls, period.id, s.date);
+      return `<button type="button" class="picker-chip ${s.date === sel.dateIso ? "active" : ""}" data-date="${s.date}">${done ? "✅ " : ""}${fmtDateShort(s.date)}</button>`;
     }).join("");
     datePicker.querySelectorAll(".picker-chip").forEach((chip) => {
-      chip.addEventListener("click", () => { presDateIso = chip.dataset.date; renderPresencas(); });
+      chip.addEventListener("click", () => {
+        withScrollPreserved(() => { sel.dateIso = chip.dataset.date; renderPresencas(); });
+      });
     });
     const activeChip = datePicker.querySelector(".picker-chip.active");
     if (activeChip) activeChip.scrollIntoView({ inline: "center", block: "nearest" });
 
-    const isDone = getCompleted(presPeriodId, presDateIso);
     const badge = document.getElementById("presencasTreinoBadge");
-    badge.className = "treino-badge " + (isDone ? "done" : "pending");
-    badge.innerHTML = isDone
-      ? `<i class="bi bi-check-circle-fill"></i> Este treino já foi marcado como realizado no Plano.`
-      : `<i class="bi bi-clock-history"></i> Este treino ainda não foi marcado como realizado. Podes marcá-lo na vista Plano.`;
+    if (cls.hasPlano) {
+      const isDone = getCompleted(sel.periodId, sel.dateIso);
+      badge.hidden = false;
+      badge.className = "treino-badge " + (isDone ? "done" : "pending");
+      badge.innerHTML = isDone
+        ? `<i class="bi bi-check-circle-fill"></i> Este treino já foi marcado como realizado no Plano.`
+        : `<i class="bi bi-clock-history"></i> Este treino ainda não foi marcado como realizado. Podes marcá-lo na vista Plano.`;
+    } else {
+      badge.hidden = true;
+      badge.innerHTML = "";
+    }
 
     const list = document.getElementById("presencasList");
-    list.innerHTML = ATHLETES.map((a) => {
-      const val = getAttendance(presPeriodId, presDateIso, a);
+    list.innerHTML = cls.athletes.map((a) => {
+      const val = getAttendance(sel.periodId, sel.dateIso, a);
       return `
         <div class="attendance-row" data-athlete="${escapeHtml(a)}">
-          <span class="att-name">${escapeHtml(displayName(a))}</span>
+          <div class="att-name-col">
+            <span class="att-name">${escapeHtml(displayName(a))}</span>
+            ${attendanceWarnHtml(cls, a)}
+          </div>
           <div class="att-btns">
             <button type="button" class="att-btn p ${val === "Presente" ? "active" : ""}" data-val="Presente">P</button>
             <button type="button" class="att-btn j ${val === "Justificou" ? "active" : ""}" data-val="Justificou">J</button>
@@ -964,15 +1130,17 @@
       const athlete = row.dataset.athlete;
       row.querySelectorAll(".att-btn").forEach((btn) => {
         btn.addEventListener("click", () => {
-          setAttendance(presPeriodId, presDateIso, athlete, btn.dataset.val);
-          renderPresencas();
+          withScrollPreserved(() => {
+            setAttendance(sel.periodId, sel.dateIso, athlete, btn.dataset.val);
+            renderPresencas();
+          });
         });
       });
     });
 
     let p = 0, j = 0, f = 0;
-    ATHLETES.forEach((a) => {
-      const val = getAttendance(presPeriodId, presDateIso, a);
+    cls.athletes.forEach((a) => {
+      const val = getAttendance(sel.periodId, sel.dateIso, a);
       if (val === "Presente") p++;
       else if (val === "Justificou") j++;
       else if (val === "Faltou") f++;
@@ -982,6 +1150,37 @@
       <span class="chip">📋 ${j} justificaram</span>
       <span class="chip">❌ ${f} faltaram</span>
     `;
+  }
+
+  // "Total" — para todas as crianças da classe atual, a soma de
+  // presenças, faltas e justificações já registadas em toda a época
+  // (todos os períodos), mais o aviso de quem não vem há mais de 4
+  // treinos.
+  function renderPresencasTotais(cls) {
+    const flat = classAllSessionsFlat(cls);
+    const host = document.getElementById("presencasTotaisList");
+    host.innerHTML = cls.athletes.map((a) => {
+      let p = 0, j = 0, f = 0;
+      flat.forEach((s) => {
+        const val = getAttendance(s.periodId, s.date, a);
+        if (val === "Presente") p++;
+        else if (val === "Justificou") j++;
+        else if (val === "Faltou") f++;
+      });
+      return `
+        <div class="attendance-row totals-row">
+          <div class="att-name-col">
+            <span class="att-name">${escapeHtml(displayName(a))}</span>
+            ${attendanceWarnHtml(cls, a)}
+          </div>
+          <div class="totals-counts">
+            <span class="totals-count p">✅ ${p}</span>
+            <span class="totals-count j">📋 ${j}</span>
+            <span class="totals-count f">❌ ${f}</span>
+          </div>
+        </div>
+      `;
+    }).join("") || emptyState("Sem atletas nesta classe.");
   }
 
   // ==================================================================

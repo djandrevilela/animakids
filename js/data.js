@@ -21,7 +21,13 @@ const ANIMAKIDS_DATA = {
     "A19",
     "A20",
     "A21",
-    "A22"
+    "A22",
+    "A23",
+    "A24",
+    "A25",
+    "A26",
+    "A27",
+    "A28"
   ],
   "objectives": [
     {
@@ -1295,3 +1301,161 @@ const ANIMAKIDS_DATA = {
     }
   ]
 };
+
+// ==================================================================
+// MOVEKIDS — segunda classe integrada na app. Presenças funcionam
+// exatamente como as da AnimaKids (mesmo mecanismo, códigos e
+// períodos próprios). Sem Plano de Treino / Objetivos / Progresso
+// próprios — só presenças. Treinos: todas as segundas e sextas a
+// partir de 4 de setembro de 2026 até final de julho de 2027, sem
+// feriados nacionais obrigatórios nem o feriado municipal de Sintra
+// (29 de junho, Dia de S. Pedro) que caiam em segunda ou sexta.
+// Datas excluídas por feriado: 2026-10-05 (Implantação da República),
+// 2026-12-25 (Natal), 2027-01-01 (Ano Novo), 2027-03-26 (Sexta-feira
+// Santa). O feriado municipal de Sintra não caiu em segunda/sexta
+// nesta época (29/06/2026 é antes do início da época; 29/06/2027 é
+// terça-feira).
+// ==================================================================
+const MOVEKIDS_DATA = {
+  "athletes": [
+    "M01",
+    "M02",
+    "M03",
+    "M04",
+    "M05",
+    "M06",
+    "M07",
+    "M08",
+    "M09",
+    "M10",
+    "M11",
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23",
+    "M24",
+    "M25",
+    "M26",
+    "M27"
+  ],
+  "periods": [
+    {
+      "id": "mk-set-dez",
+      "label": "Set - Dez 2026",
+      "sessions": [
+        { "date": "2026-09-04" },
+        { "date": "2026-09-07" },
+        { "date": "2026-09-11" },
+        { "date": "2026-09-14" },
+        { "date": "2026-09-18" },
+        { "date": "2026-09-21" },
+        { "date": "2026-09-25" },
+        { "date": "2026-09-28" },
+        { "date": "2026-10-02" },
+        { "date": "2026-10-09" },
+        { "date": "2026-10-12" },
+        { "date": "2026-10-16" },
+        { "date": "2026-10-19" },
+        { "date": "2026-10-23" },
+        { "date": "2026-10-26" },
+        { "date": "2026-10-30" },
+        { "date": "2026-11-02" },
+        { "date": "2026-11-06" },
+        { "date": "2026-11-09" },
+        { "date": "2026-11-13" },
+        { "date": "2026-11-16" },
+        { "date": "2026-11-20" },
+        { "date": "2026-11-23" },
+        { "date": "2026-11-27" },
+        { "date": "2026-11-30" },
+        { "date": "2026-12-04" },
+        { "date": "2026-12-07" },
+        { "date": "2026-12-11" },
+        { "date": "2026-12-14" },
+        { "date": "2026-12-18" },
+        { "date": "2026-12-21" },
+        { "date": "2026-12-28" }
+      ]
+    },
+    {
+      "id": "mk-jan-mar",
+      "label": "Jan - Mar 2027",
+      "sessions": [
+        { "date": "2027-01-04" },
+        { "date": "2027-01-08" },
+        { "date": "2027-01-11" },
+        { "date": "2027-01-15" },
+        { "date": "2027-01-18" },
+        { "date": "2027-01-22" },
+        { "date": "2027-01-25" },
+        { "date": "2027-01-29" },
+        { "date": "2027-02-01" },
+        { "date": "2027-02-05" },
+        { "date": "2027-02-08" },
+        { "date": "2027-02-12" },
+        { "date": "2027-02-15" },
+        { "date": "2027-02-19" },
+        { "date": "2027-02-22" },
+        { "date": "2027-02-26" },
+        { "date": "2027-03-01" },
+        { "date": "2027-03-05" },
+        { "date": "2027-03-08" },
+        { "date": "2027-03-12" },
+        { "date": "2027-03-15" },
+        { "date": "2027-03-19" },
+        { "date": "2027-03-22" },
+        { "date": "2027-03-29" }
+      ]
+    },
+    {
+      "id": "mk-abr-jul",
+      "label": "Abr - Jul 2027",
+      "sessions": [
+        { "date": "2027-04-02" },
+        { "date": "2027-04-05" },
+        { "date": "2027-04-09" },
+        { "date": "2027-04-12" },
+        { "date": "2027-04-16" },
+        { "date": "2027-04-19" },
+        { "date": "2027-04-23" },
+        { "date": "2027-04-26" },
+        { "date": "2027-04-30" },
+        { "date": "2027-05-03" },
+        { "date": "2027-05-07" },
+        { "date": "2027-05-10" },
+        { "date": "2027-05-14" },
+        { "date": "2027-05-17" },
+        { "date": "2027-05-21" },
+        { "date": "2027-05-24" },
+        { "date": "2027-05-28" },
+        { "date": "2027-05-31" },
+        { "date": "2027-06-04" },
+        { "date": "2027-06-07" },
+        { "date": "2027-06-11" },
+        { "date": "2027-06-14" },
+        { "date": "2027-06-18" },
+        { "date": "2027-06-21" },
+        { "date": "2027-06-25" },
+        { "date": "2027-06-28" },
+        { "date": "2027-07-02" },
+        { "date": "2027-07-05" },
+        { "date": "2027-07-09" },
+        { "date": "2027-07-12" },
+        { "date": "2027-07-16" },
+        { "date": "2027-07-19" },
+        { "date": "2027-07-23" },
+        { "date": "2027-07-26" },
+        { "date": "2027-07-30" }
+      ]
+    }
+  ]
+};
+
