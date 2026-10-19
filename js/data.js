@@ -15,7 +15,6 @@ const ANIMAKIDS_DATA = {
     "A13",
     "A14",
     "A15",
-    "A16",
     "A17",
     "A18",
     "A19",
@@ -27,7 +26,12 @@ const ANIMAKIDS_DATA = {
     "A25",
     "A26",
     "A27",
-    "A28"
+    "A28",
+    "A29",
+    "A30",
+    "A31",
+    "A32",
+    "A33"
   ],
   "objectives": [
     {
@@ -1322,7 +1326,6 @@ const MOVEKIDS_DATA = {
     "M02",
     "M03",
     "M04",
-    "M05",
     "M06",
     "M07",
     "M08",
@@ -1330,7 +1333,6 @@ const MOVEKIDS_DATA = {
     "M10",
     "M11",
     "M12",
-    "M13",
     "M14",
     "M15",
     "M16",
@@ -1344,7 +1346,8 @@ const MOVEKIDS_DATA = {
     "M24",
     "M25",
     "M26",
-    "M27"
+    "M27",
+    "M28"
   ],
   "periods": [
     {

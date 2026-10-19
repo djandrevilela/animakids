@@ -21,41 +21,108 @@
   const MOVEKIDS_PERIODS = MOVEKIDS_DATA.periods;
 
   // ------------------------------------------------------------------
-  // Classes disponíveis na vista Presenças. Cada classe tem os seus
-  // próprios códigos de atleta (prefixo único, nunca colide entre
-  // classes) e os seus próprios períodos/treinos. Só a AnimaKids tem
-  // vista de Plano de Treino, por isso só ela mostra o aviso "marcado
-  // como realizado no Plano" — a MoveKids mostra em vez disso se já
-  // há presenças registadas nesse treino.
+  // DIRETÓRIO (privado): nomes reais + classes (e respetivos atletas).
+  // O ficheiro público data.js só tem códigos anónimos; quem pertence a
+  // cada classe, e os nomes, vivem aqui (localStorage) e, se a
+  // sincronização estiver ligada, no roster.json do repositório PRIVADO.
+  // Permite adicionar/remover atletas e classes sem tocar no código.
   // ------------------------------------------------------------------
-  const PRES_CLASSES = [
-    { key: "animakids", label: "AnimaKids", athletes: ATHLETES, periods: PERIODS, hasPlano: true },
-    { key: "movekids", label: "MoveKids", athletes: MOVEKIDS_ATHLETES, periods: MOVEKIDS_PERIODS, hasPlano: false },
+  const LS_CONFIG = "animakids-config-cache";
+  const EPOCH_ISO = new Date(0).toISOString();
+  const BUILTIN_PERIODS = { animakids: PERIODS, movekids: MOVEKIDS_PERIODS };
+
+  // Feriados nacionais + feriado municipal de Sintra (29 jun), época 26/27
+  const HOLIDAYS_PT = [
+    "2026-10-05", "2026-11-01", "2026-12-01", "2026-12-08", "2026-12-25",
+    "2027-01-01", "2027-03-26", "2027-04-25", "2027-05-01", "2027-05-27",
+    "2027-06-10", "2027-06-29", "2027-08-15",
   ];
-  function presClass(key) {
-    return PRES_CLASSES.find((c) => c.key === key) || PRES_CLASSES[0];
+
+  function numOfCode(code) { return parseInt(String(code).replace(/^\D+/, ""), 10) || 0; }
+  function nextNumFor(prefix, codes, roster) {
+    let m = 0;
+    codes.concat(Object.keys(roster || {})).forEach((code) => {
+      if (String(code).startsWith(prefix)) m = Math.max(m, numOfCode(code));
+    });
+    return m + 1;
   }
 
-  // ------------------------------------------------------------------
-  // ROSTER (real names) — kept OUT of the public data.js on purpose.
-  // ATHLETES only contains anonymous codes (A01, A02, ...), safe for a
-  // public repo. Real names live only in this browser's localStorage
-  // and, optionally, in a PRIVATE GitHub repo (roster.json), fetched
-  // with the same token used for state sync. Never written to the
-  // public repo.
-  // ------------------------------------------------------------------
-  function loadRosterCache() {
-    try { return JSON.parse(localStorage.getItem(LS_ROSTER) || "{}"); } catch (e) { return {}; }
+  function defaultClasses(roster) {
+    return [
+      { key: "animakids", label: "AnimaKids", builtin: true, prefix: "A",
+        athletes: ATHLETES.slice(), nextNum: nextNumFor("A", ATHLETES, roster) },
+      { key: "movekids", label: "MoveKids", builtin: true, prefix: "M",
+        athletes: MOVEKIDS_ATHLETES.slice(), nextNum: nextNumFor("M", MOVEKIDS_ATHLETES, roster) },
+    ];
   }
-  function saveRosterCache(roster) {
-    localStorage.setItem(LS_ROSTER, JSON.stringify(roster));
+
+  function normalizeClasses(list, roster) {
+    const out = [];
+    (Array.isArray(list) ? list : []).forEach((c) => {
+      if (!c || !c.key || !c.label) return;
+      const builtin = Object.prototype.hasOwnProperty.call(BUILTIN_PERIODS, c.key);
+      const prefix = c.prefix || (c.key === "animakids" ? "A" : c.key === "movekids" ? "M" : "X");
+      const athletes = Array.isArray(c.athletes) ? c.athletes.slice() : [];
+      out.push({
+        key: String(c.key), label: String(c.label), builtin, prefix, athletes,
+        nextNum: Math.max(Number(c.nextNum) || 1, nextNumFor(prefix, athletes, roster)),
+        periods: builtin ? undefined : (Array.isArray(c.periods) ? c.periods : []),
+      });
+    });
+    defaultClasses(roster).slice().reverse().forEach((d) => {
+      if (!out.some((c) => c.key === d.key)) out.unshift(d);
+    });
+    return out;
   }
-  let ROSTER = loadRosterCache();
+
+  function loadDir() {
+    let dir = null;
+    try { dir = JSON.parse(localStorage.getItem(LS_CONFIG) || "null"); } catch (e) { dir = null; }
+    let legacy = {};
+    try { legacy = JSON.parse(localStorage.getItem(LS_ROSTER) || "{}"); } catch (e) { legacy = {}; }
+    if (!dir || typeof dir !== "object") dir = { roster: legacy, classes: null, updatedAt: EPOCH_ISO };
+    if (!dir.roster || typeof dir.roster !== "object") dir.roster = legacy;
+    dir.classes = normalizeClasses(dir.classes, dir.roster);
+    if (!dir.updatedAt) dir.updatedAt = EPOCH_ISO;
+    return dir;
+  }
+  let DIR = loadDir();
+  function saveDir() { localStorage.setItem(LS_CONFIG, JSON.stringify(DIR)); }
+  function touchDir() {
+    DIR.updatedAt = new Date().toISOString();
+    saveDir();
+    schedulePush();
+  }
 
   function displayName(code) {
-    if (ROSTER[code]) return ROSTER[code];
+    if (DIR.roster[code]) return DIR.roster[code];
     return "Atleta " + code;
   }
+
+  // Ordem alfabética (pt) pelo nome mostrado — usada em TODAS as listas.
+  function sortCodesByName(codes) {
+    return codes.slice().sort((a, b) =>
+      displayName(a).localeCompare(displayName(b), "pt", { sensitivity: "base" }) || a.localeCompare(b));
+  }
+
+  // Classes prontas a usar na vista Presenças (atletas já ordenados).
+  function getClasses() {
+    return DIR.classes.map((c) => ({
+      key: c.key,
+      label: c.label,
+      builtin: !!c.builtin,
+      hasPlano: c.key === "animakids",
+      athletes: sortCodesByName(c.athletes),
+      periods: c.builtin ? BUILTIN_PERIODS[c.key] : (c.periods || []),
+    }));
+  }
+  function presClass(key) {
+    const all = getClasses();
+    return all.find((c) => c.key === key) || all[0];
+  }
+  // Atletas da AnimaKids (usadas em Atletas & Grupos e em Progresso)
+  function animaAthletes() { return presClass("animakids").athletes; }
+
 
   const CAT_CLASS = {
     "Mini-Trampolim": "cat-mini-trampolim",
@@ -333,18 +400,37 @@
     return pushWithRetry(cfg, DATA_FILE_PATH, () => STATE, sha);
   }
 
+  function dirPayload() {
+    return {
+      roster: DIR.roster,
+      classes: DIR.classes,
+      updatedAt: DIR.updatedAt,
+      note: "Ficheiro PRIVADO — nomes reais das atletas e classes. Nunca colocar no repositório público.",
+    };
+  }
+
+  // Ganha sempre a versão mais recente (updatedAt). Um roster.json antigo
+  // (só com nomes, sem classes) é aceite uma vez e depois substituído.
   async function syncRoster(cfg, showToast) {
     try {
       const { remote, sha } = await syncPullPath(cfg, ROSTER_FILE_PATH);
-      const localHasNames = Object.keys(ROSTER).length > 0;
-      if (remote && remote.roster) {
-        ROSTER = remote.roster;
-        saveRosterCache(ROSTER);
-      } else if (localHasNames) {
-        await pushWithRetry(cfg, ROSTER_FILE_PATH, () => ({
-          roster: ROSTER,
-          note: "Ficheiro PRIVADO — nomes reais das atletas. Nunca colocar no repositório público.",
-        }), sha);
+      const localT = DIR.updatedAt || EPOCH_ISO;
+      const remoteT = (remote && remote.updatedAt) || EPOCH_ISO;
+      if (remote && (remote.roster || remote.classes)) {
+        if (remoteT > localT) {
+          if (remote.roster) DIR.roster = remote.roster;
+          if (remote.classes) DIR.classes = normalizeClasses(remote.classes, DIR.roster);
+          DIR.updatedAt = remoteT;
+          saveDir();
+        } else if (localT > remoteT) {
+          await pushWithRetry(cfg, ROSTER_FILE_PATH, dirPayload, sha);
+        } else if (remote.roster && !remote.classes) {
+          DIR.roster = remote.roster; // ficheiro antigo, só nomes
+          DIR.classes = normalizeClasses(DIR.classes, DIR.roster);
+          saveDir();
+        }
+      } else if (Object.keys(DIR.roster).length > 0 || localT > EPOCH_ISO) {
+        await pushWithRetry(cfg, ROSTER_FILE_PATH, dirPayload, sha);
       }
     } catch (err) {
       console.error("[AnimaKids roster sync]", err);
@@ -447,53 +533,199 @@
   });
 
   // ------------------------------------------------------------------
-  // Roster editor (private real names)
+  // Atletas e classes (Definições): adicionar/remover atletas e classes
   // ------------------------------------------------------------------
-  const rosterSection = document.getElementById("rosterSection");
-  document.getElementById("rosterToggleBtn").addEventListener("click", () => {
-    rosterSection.hidden = !rosterSection.hidden;
-    if (!rosterSection.hidden) renderRosterFields();
+  const manageSection = document.getElementById("manageSection");
+  const manageBody = document.getElementById("manageBody");
+  document.getElementById("manageToggleBtn").addEventListener("click", () => {
+    manageSection.hidden = !manageSection.hidden;
+    if (!manageSection.hidden) renderManage();
   });
 
-  function renderRosterFields() {
-    const host = document.getElementById("rosterFields");
-    host.innerHTML = PRES_CLASSES.map((cls) => `
-      <div class="roster-class-group">
-        <div class="roster-class-label">${escapeHtml(cls.label)}</div>
+  const WEEKDAY_OPTS = [[1, "Seg"], [2, "Ter"], [3, "Qua"], [4, "Qui"], [5, "Sex"], [6, "Sáb"], [0, "Dom"]];
+
+  function renderManage() {
+    const classes = getClasses();
+    const classesHtml = classes.map((cls) => `
+      <div class="manage-class" data-class="${escapeHtml(cls.key)}">
+        <div class="manage-class-head">
+          <div><strong>${escapeHtml(cls.label)}</strong> <span class="text-muted small">· ${cls.athletes.length} atletas</span></div>
+          ${cls.builtin ? "" : `<button type="button" class="btn btn-sm btn-outline-danger" data-act="del-class"><i class="bi bi-trash"></i> Remover classe</button>`}
+        </div>
         ${cls.athletes.map((code) => `
-          <div class="input-group input-group-sm mb-1">
-            <span class="input-group-text" style="min-width:56px;">${escapeHtml(code)}</span>
-            <input type="text" class="form-control" data-code="${escapeHtml(code)}" value="${escapeHtml(ROSTER[code] || "")}" placeholder="Nome real (opcional)">
+          <div class="input-group input-group-sm mb-1" data-code="${escapeHtml(code)}">
+            <span class="input-group-text manage-code">${escapeHtml(code)}</span>
+            <input type="text" class="form-control manage-name" value="${escapeHtml(DIR.roster[code] || "")}" placeholder="Nome (opcional)">
+            <button type="button" class="btn btn-outline-danger" data-act="del-athlete" title="Remover atleta"><i class="bi bi-trash"></i></button>
           </div>
-        `).join("")}
+        `).join("") || `<div class="text-muted small mb-2">Sem atletas nesta classe.</div>`}
+        <div class="input-group input-group-sm mt-2">
+          <input type="text" class="form-control manage-new-name" placeholder="Nome do novo atleta">
+          <button type="button" class="btn btn-primary" data-act="add-athlete"><i class="bi bi-plus-lg"></i> Adicionar</button>
+        </div>
       </div>
     `).join("");
+
+    const today = todayIso();
+    const newClassHtml = `
+      <div class="manage-class manage-newclass">
+        <div class="manage-class-head"><strong>Adicionar classe (para Presenças)</strong></div>
+        <input type="text" class="form-control form-control-sm mb-2" id="ncName" placeholder="Nome da classe (ex: FlipKids)">
+        <div class="small text-muted mb-1">Dias de treino</div>
+        <div class="manage-weekdays mb-2">
+          ${WEEKDAY_OPTS.map(([v, l]) => `<label class="manage-wd"><input type="checkbox" class="nc-wd" value="${v}"> ${l}</label>`).join("")}
+        </div>
+        <div class="row g-2 mb-2">
+          <div class="col-6"><label class="small text-muted">Início</label><input type="date" class="form-control form-control-sm" id="ncStart" value="${today}"></div>
+          <div class="col-6"><label class="small text-muted">Fim</label><input type="date" class="form-control form-control-sm" id="ncEnd" value="2027-07-31"></div>
+        </div>
+        <label class="small d-block mb-2"><input type="checkbox" id="ncHolidays" checked> Excluir feriados nacionais e de Sintra</label>
+        <button type="button" class="btn btn-primary btn-sm w-100" data-act="add-class"><i class="bi bi-plus-lg"></i> Criar classe</button>
+      </div>
+    `;
+    manageBody.innerHTML = classesHtml + newClassHtml;
   }
 
-  document.getElementById("rosterSaveBtn").addEventListener("click", async () => {
-    const inputs = document.querySelectorAll("#rosterFields input[data-code]");
-    const newRoster = {};
-    inputs.forEach((inp) => {
-      const val = inp.value.trim();
-      if (val) newRoster[inp.dataset.code] = val;
+  function isoLocal(d) {
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  function monthAbbr(m) { return MONTHS_PT[m].charAt(0).toUpperCase() + MONTHS_PT[m].slice(1, 3); }
+
+  // Gera os treinos (datas) de uma classe nova e agrupa-os em períodos de
+  // até 4 meses (ex.: "Set - Dez 2026"), como as classes existentes.
+  function buildCustomPeriods(key, weekdays, startIso, endIso, excludeHolidays) {
+    const hol = new Set(excludeHolidays ? HOLIDAYS_PT : []);
+    const dates = [];
+    const d = new Date(startIso + "T00:00:00");
+    const end = new Date(endIso + "T00:00:00");
+    while (d <= end) {
+      const iso = isoLocal(d);
+      if (weekdays.includes(d.getDay()) && !hol.has(iso)) dates.push(iso);
+      d.setDate(d.getDate() + 1);
+    }
+    if (!dates.length) return [];
+    const first = new Date(dates[0] + "T00:00:00");
+    const base = first.getFullYear() * 12 + first.getMonth();
+    const chunks = {};
+    dates.forEach((iso) => {
+      const dt = new Date(iso + "T00:00:00");
+      const idx = Math.floor((dt.getFullYear() * 12 + dt.getMonth() - base) / 4);
+      (chunks[idx] = chunks[idx] || []).push(iso);
     });
-    ROSTER = newRoster;
-    saveRosterCache(ROSTER);
-    renderCurrentView();
-    toast("Nomes guardados neste dispositivo.");
-    const cfg = loadSyncConfig();
-    if (cfg && cfg.repo && cfg.token) {
-      try {
-        const { sha } = await syncPullPath(cfg, ROSTER_FILE_PATH);
-        await pushWithRetry(cfg, ROSTER_FILE_PATH, () => ({
-          roster: ROSTER,
-          note: "Ficheiro PRIVADO — nomes reais das atletas. Nunca colocar no repositório público.",
-        }), sha);
-        toast("Nomes também enviados para o repositório privado.");
-      } catch (err) {
-        console.error("[AnimaKids roster save]", err);
-        toast("Guardado neste dispositivo, mas falhou o envio para o GitHub: " + err.message);
+    return Object.keys(chunks).map(Number).sort((a, b) => a - b).map((idx, n) => {
+      const list = chunks[idx];
+      const a = new Date(list[0] + "T00:00:00");
+      const b = new Date(list[list.length - 1] + "T00:00:00");
+      let label;
+      if (a.getFullYear() === b.getFullYear()) {
+        label = a.getMonth() === b.getMonth()
+          ? `${monthAbbr(a.getMonth())} ${a.getFullYear()}`
+          : `${monthAbbr(a.getMonth())} - ${monthAbbr(b.getMonth())} ${a.getFullYear()}`;
+      } else {
+        label = `${monthAbbr(a.getMonth())} ${a.getFullYear()} - ${monthAbbr(b.getMonth())} ${b.getFullYear()}`;
       }
+      return { id: `${key}-p${n + 1}`, label, sessions: list.map((date) => ({ date })) };
+    });
+  }
+
+  function slugify(s) {
+    return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "classe";
+  }
+  // Prefixo de código único por classe (um código nunca colide entre classes)
+  function pickPrefix(label) {
+    const used = new Set(DIR.classes.map((c) => c.prefix));
+    const letters = (label.toUpperCase().replace(/[^A-Z]/g, "") + "ABCDEFGHIJKLMNOPQRSTUVWXYZ").split("");
+    const free = letters.find((l) => !used.has(l));
+    return free || ("C" + (DIR.classes.length + 1));
+  }
+
+  function addAthleteToClass(classKey, name) {
+    const c = DIR.classes.find((x) => x.key === classKey);
+    if (!c) return;
+    const code = c.prefix + String(c.nextNum).padStart(2, "0");
+    c.nextNum += 1; // contador nunca recua: um código removido não é reutilizado
+    c.athletes.push(code);
+    DIR.roster[code] = name;
+    touchDir();
+  }
+  function removeAthleteFromClass(classKey, code) {
+    const c = DIR.classes.find((x) => x.key === classKey);
+    if (!c) return;
+    c.athletes = c.athletes.filter((x) => x !== code);
+    delete DIR.roster[code]; // o nome sai; o histórico (anónimo) fica guardado
+    touchDir();
+  }
+
+  manageBody.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    const box = btn.closest(".manage-class");
+    const classKey = box && box.dataset.class;
+
+    if (act === "add-athlete") {
+      const input = box.querySelector(".manage-new-name");
+      const name = input.value.trim();
+      if (!name) { toast("Escreve o nome do atleta."); return; }
+      addAthleteToClass(classKey, name);
+      renderManage();
+      renderCurrentView();
+      toast("Atleta adicionado.");
+    } else if (act === "del-athlete") {
+      const code = btn.closest("[data-code]").dataset.code;
+      const cls = presClass(classKey);
+      if (!window.confirm(`Remover ${displayName(code)} de ${cls.label}?\n\nO nome é apagado e o atleta deixa de aparecer; o histórico de presenças/progresso (anónimo) fica guardado.`)) return;
+      removeAthleteFromClass(classKey, code);
+      renderManage();
+      renderCurrentView();
+      toast("Atleta removido.");
+    } else if (act === "del-class") {
+      const cls = presClass(classKey);
+      if (!window.confirm(`Remover a classe ${cls.label} e os seus ${cls.athletes.length} atletas das Presenças?\n\nOs nomes são apagados; o histórico anónimo fica guardado.`)) return;
+      const c = DIR.classes.find((x) => x.key === classKey);
+      c.athletes.forEach((code) => { delete DIR.roster[code]; });
+      DIR.classes = DIR.classes.filter((x) => x.key !== classKey);
+      if (presClassKey === classKey) presClassKey = "animakids";
+      touchDir();
+      renderManage();
+      renderCurrentView();
+      toast("Classe removida.");
+    } else if (act === "add-class") {
+      const label = document.getElementById("ncName").value.trim();
+      const weekdays = Array.from(manageBody.querySelectorAll(".nc-wd:checked")).map((i) => parseInt(i.value, 10));
+      const start = document.getElementById("ncStart").value;
+      const endD = document.getElementById("ncEnd").value;
+      const excl = document.getElementById("ncHolidays").checked;
+      if (!label) { toast("Dá um nome à classe."); return; }
+      if (DIR.classes.some((c) => c.label.toLowerCase() === label.toLowerCase())) { toast("Já existe uma classe com esse nome."); return; }
+      if (!weekdays.length) { toast("Escolhe pelo menos um dia de treino."); return; }
+      if (!start || !endD || start > endD) { toast("Confirma as datas de início e fim."); return; }
+      const key = slugify(label) + "-" + Date.now().toString(36).slice(-4);
+      const periods = buildCustomPeriods(key, weekdays, start, endD, excl);
+      if (!periods.length) { toast("Não há treinos nesse intervalo."); return; }
+      DIR.classes.push({ key, label, builtin: false, prefix: pickPrefix(label), athletes: [], nextNum: 1, periods });
+      touchDir();
+      renderManage();
+      renderCurrentView();
+      toast("Classe criada. Já aparece em Presenças.");
+    }
+  });
+
+  manageBody.addEventListener("change", (e) => {
+    const inp = e.target.closest(".manage-name");
+    if (!inp) return;
+    const code = inp.closest("[data-code]").dataset.code;
+    const val = inp.value.trim();
+    if (val) DIR.roster[code] = val; else delete DIR.roster[code];
+    touchDir();
+    renderCurrentView();
+    toast("Nome guardado.");
+  });
+
+  manageBody.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.classList.contains("manage-new-name")) {
+      e.preventDefault();
+      e.target.closest(".manage-class").querySelector('[data-act="add-athlete"]').click();
     }
   });
 
@@ -565,15 +797,18 @@
 
   async function exportPresencasExcel() {
     if (typeof XLSX === "undefined") { toast("Biblioteca de Excel não carregou. Verifica a ligação à internet."); return; }
-    if (Object.keys(ROSTER).length === 0) {
+    if (Object.keys(DIR.roster).length === 0) {
       toast("Aviso: sem nomes reais carregados — o Excel vai sair com códigos (Atleta A01…). Preenche os nomes em Mais → Nomes reais.");
     }
     const wb = XLSX.utils.book_new();
 
     // One set of sheets per classe (AnimaKids, MoveKids, ...), prefixadas
     // para nunca colidir nomes de folha entre classes no mesmo mês.
-    PRES_CLASSES.forEach((cls) => {
-      const prefix = cls.key.slice(0, 2).toUpperCase();
+    const usedPrefixes = new Set();
+    getClasses().forEach((cls) => {
+      let prefix = cls.key.slice(0, 2).toUpperCase();
+      for (let n = 2; usedPrefixes.has(prefix); n++) prefix = cls.key.slice(0, 1).toUpperCase() + n;
+      usedPrefixes.add(prefix);
       const monthMap = {};
       cls.periods.forEach((p) => p.sessions.forEach((s) => {
         const d = new Date(s.date + "T00:00:00");
@@ -639,7 +874,7 @@
 
     const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const ok = await saveOrShareFile(blob, "Presencas_AnimaKids_MoveKids.xlsx", blob.type);
+    const ok = await saveOrShareFile(blob, "Presencas_AnimaKids.xlsx", blob.type);
     if (ok) toast("Excel de presenças exportado.");
   }
 
@@ -832,7 +1067,7 @@
   // VIEW: PROGRESSO
   // ==================================================================
   let progMode = "atleta";
-  let progAtletaSel = ATHLETES[0];
+  let progAtletaSel = animaAthletes()[0];
   let progObjetivoSel = OBJECTIVES[0].id;
 
   document.querySelectorAll(".progresso-mode-tabs .btn").forEach((btn) => {
@@ -881,8 +1116,11 @@
     atletaPicker.classList.toggle("d-none", progMode !== "atleta");
     objPicker.classList.toggle("d-none", progMode !== "objetivo");
 
+    const anima = animaAthletes();
+    if (!anima.includes(progAtletaSel)) progAtletaSel = anima[0];
+
     if (progMode === "atleta") {
-      atletaPicker.innerHTML = ATHLETES.map((a) => `
+      atletaPicker.innerHTML = anima.map((a) => `
         <button type="button" class="picker-chip ${a === progAtletaSel ? "active" : ""}" data-athlete="${escapeHtml(a)}">${escapeHtml(displayName(a))}</button>
       `).join("");
       atletaPicker.querySelectorAll(".picker-chip").forEach((chip) => {
@@ -897,7 +1135,7 @@
         chip.addEventListener("click", () => { progObjetivoSel = chip.dataset.obj; renderProgresso(); });
       });
       const obj = OBJECTIVES.find((o) => o.id === progObjetivoSel);
-      content.innerHTML = ATHLETES.map((a) => progCardHtml(a, obj, "objetivo")).join("");
+      content.innerHTML = anima.map((a) => progCardHtml(a, obj, "objetivo")).join("");
     }
 
     content.querySelectorAll(".prog-card").forEach((card) => {
@@ -919,7 +1157,7 @@
   // ==================================================================
   function renderAtletas() {
     const host = document.getElementById("atletasList");
-    host.innerHTML = ATHLETES.map((a) => {
+    host.innerHTML = animaAthletes().map((a) => {
       const g = getGroup(a);
       return `
         <div class="athlete-row" data-athlete="${escapeHtml(a)}">
@@ -1022,21 +1260,28 @@
   let presMode = "marcar"; // marcar | totais
   const presSelByClass = {}; // { [classKey]: { periodId, dateIso } }
 
-  // default per class: open on the next upcoming training (or the last
-  // one, if the season for that class is already over)
-  PRES_CLASSES.forEach((cls) => {
-    const next = findNextSessionRef(cls.periods, null);
-    presSelByClass[cls.key] = next
-      ? { periodId: next.periodId, dateIso: next.date }
-      : { periodId: cls.periods[0].id, dateIso: cls.periods[0].sessions[0].date };
-  });
+  // Seleção por classe: por defeito abre no próximo treino (ou no último,
+  // se a época dessa classe já acabou). Revalida se as datas mudarem.
+  function ensureSel(cls) {
+    let sel = presSelByClass[cls.key];
+    const valid = sel && cls.periods.some((p) => p.id === sel.periodId && p.sessions.some((s) => s.date === sel.dateIso));
+    if (!valid) {
+      const next = findNextSessionRef(cls.periods, null);
+      sel = next
+        ? { periodId: next.periodId, dateIso: next.date }
+        : (cls.periods[0] ? { periodId: cls.periods[0].id, dateIso: cls.periods[0].sessions[0].date } : null);
+      presSelByClass[cls.key] = sel;
+    }
+    return sel;
+  }
 
   function renderPresencas() {
     const cls = presClass(presClassKey);
-    const sel = presSelByClass[cls.key];
+    presClassKey = cls.key;
+    const sel = ensureSel(cls);
 
     const classTabsHost = document.getElementById("presencasClassTabs");
-    classTabsHost.innerHTML = PRES_CLASSES.map((c) => `
+    classTabsHost.innerHTML = getClasses().map((c) => `
       <button type="button" class="btn btn-outline-secondary ${c.key === presClassKey ? "active" : ""}" data-class="${c.key}">${escapeHtml(c.label)}</button>
     `).join("");
     classTabsHost.querySelectorAll("button").forEach((b) => {
@@ -1061,7 +1306,13 @@
     document.getElementById("presencasMarcarSection").classList.toggle("d-none", presMode !== "marcar");
     document.getElementById("presencasTotaisSection").classList.toggle("d-none", presMode !== "totais");
 
-    if (presMode === "marcar") renderPresencasMarcar(cls, sel);
+    if (presMode === "marcar" && !sel) {
+      document.getElementById("presencasPeriodTabs").innerHTML = "";
+      document.getElementById("presencasDatePicker").innerHTML = "";
+      document.getElementById("presencasTreinoBadge").hidden = true;
+      document.getElementById("presencasList").innerHTML = emptyState("Esta classe ainda não tem treinos.");
+      document.getElementById("presencasSummary").innerHTML = "";
+    } else if (presMode === "marcar") renderPresencasMarcar(cls, sel);
     else renderPresencasTotais(cls);
   }
 
