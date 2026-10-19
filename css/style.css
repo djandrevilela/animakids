@@ -588,3 +588,23 @@ h1, h2, h3, .brand-font {
   padding: 40px 20px;
 }
 .empty-state .ico { font-size: 2.2rem; margin-bottom: 8px; }
+
+/* ==================== DEFINIÇÕES: ATLETAS E CLASSES ==================== */
+.manage-class {
+  background: #F7F8FB;
+  border-radius: 14px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.manage-class-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 8px; font-size: 0.85rem;
+}
+.manage-code { min-width: 52px; font-weight: 700; font-size: 0.72rem; }
+.manage-weekdays { display: flex; flex-wrap: wrap; gap: 6px; }
+.manage-wd {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #fff; border: 1px solid #E1E6EE; border-radius: 10px;
+  padding: 4px 8px; font-size: 0.78rem; font-weight: 600;
+}
+.manage-newclass { background: #EEF4FE; }
