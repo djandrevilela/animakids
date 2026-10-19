@@ -21,6 +21,7 @@ Com ela dá para:
 - 👥 **Organizar os grupos** de trabalho (1, 2 e 3)
 - ✅ **Marcar presenças** e treinos já dados
 - 📈 **Ver sempre em que fase da época** a turma está
+- 🧑‍🤝‍🧑 **Gerir atletas e classes** nas Definições (adicionar/remover), com todas as listas sempre por **ordem alfabética**
 
 ---
 

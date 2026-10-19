@@ -189,19 +189,18 @@
 
     <hr>
 
-    <button type="button" class="btn btn-outline-secondary w-100 mb-2" id="rosterToggleBtn">
-      <i class="bi bi-person-badge"></i> Nomes reais das atletas (privado)
+    <button type="button" class="btn btn-outline-secondary w-100 mb-2" id="manageToggleBtn">
+      <i class="bi bi-people-fill"></i> Atletas e classes
     </button>
-    <div id="rosterSection" hidden>
+    <div id="manageSection" hidden>
       <p class="warning-box">
-        Estes nomes ficam guardados só neste dispositivo (e, se tiveres a
+        Aqui adicionas ou removes atletas e classes (para as Presenças). Os
+        nomes ficam guardados só neste dispositivo e, se tiveres a
         sincronização ligada, no ficheiro <code>roster.json</code> do teu
-        repositório <strong>privado</strong>) — nunca são escritos no
-        código público da app. Sem isto preenchido, a app mostra só
-        "Atleta A01", "Atleta A02", etc.
+        repositório <strong>privado</strong> — nunca no código público. As
+        listas aparecem sempre por ordem alfabética.
       </p>
-      <div id="rosterFields" class="d-flex flex-column gap-2 mb-2"></div>
-      <button type="button" class="btn btn-primary w-100" id="rosterSaveBtn">Guardar nomes</button>
+      <div id="manageBody"></div>
     </div>
 
     <hr>
