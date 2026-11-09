@@ -152,7 +152,7 @@
     return periods.find((p) => p.id === id) || null;
   }
 
-  const MICRO_COLORS = ["#0a4fa8", "#5BB174", "#F2B84B", "#C27BA0", "#ffa04d", "#F28C28"];
+  const MICRO_COLORS = ["#6D9EEB", "#5BB174", "#F2B84B", "#C27BA0", "#1FA3A3", "#F28C28"];
   function microColor(micro) {
     if (!micro) return "#E1E6EE";
     let h = 0; for (let i = 0; i < micro.length; i++) h = (h * 31 + micro.charCodeAt(i)) >>> 0;
@@ -193,7 +193,7 @@
           <button type="button" class="pb-link" id="phaseEditBtn">Editar fases</button>
         </div>
         ${phaseExpanded ? `<div class="mt-2 d-flex flex-column gap-2">${all.map((p) => `
-          <div style="padding:8px 10px;border-radius:10px;background:${p === ph ? "rgba(245,130,32,0.18)" : "rgba(255,255,255,0.7)"};">
+          <div style="padding:8px 10px;border-radius:10px;background:${p === ph ? "rgba(31,163,163,0.18)" : "rgba(255,255,255,0.7)"};">
             <div style="font-weight:700;font-size:0.76rem;">${esc(p.title)} <span style="font-weight:600;color:var(--gm-muted);">${phRange(p) ? "(" + phRange(p) + ")" : ""}</span></div>
             <div style="font-size:0.72rem;color:var(--gm-muted);margin-top:2px;">${esc(p.description || "")}</div></div>`).join("")}</div>` : ""}`;
       const tg = $("phaseToggleBtn"); if (tg) tg.addEventListener("click", () => { phaseExpanded = !phaseExpanded; renderPhaseBanner(cls); });
