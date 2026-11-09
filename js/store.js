@@ -11,9 +11,14 @@
   "use strict";
   const GA = window.GA;
 
+  // As chaves levam o caminho da página: duas instalações da app no mesmo
+  // endereço (ex: /gimnoanima/ e /animakids/) deixam de partilhar dados/token.
+  const NS = "gimnoanima:" + location.pathname.replace(/[^/]*$/, "") + ":";
   const LS = {
-    SESSION: "gimnoanima-session", CONFIG: "gimnoanima-config", STATE: "gimnoanima-state",
-    SYNC: "gimnoanima-sync", LOADED: "gimnoanima-loaded", CLASS: "gimnoanima-class",
+    SESSION: NS + "session", CONFIG: NS + "config", STATE: NS + "state",
+    SYNC: NS + "sync", LOADED: NS + "loaded", CLASS: NS + "class",
+    SHA_CONFIG: NS + "sha-config", SHA_STATE: NS + "sha-state",
+    DIRTY_CONFIG: NS + "dirty-config", DIRTY_STATE: NS + "dirty-state",
   };
   const FILES = { config: "gimnoanima-config.json", state: "gimnoanima-state.json" };
   const EPOCH = new Date(0).toISOString();
@@ -77,8 +82,10 @@
 
   const saveConfig = () => localStorage.setItem(LS.CONFIG, JSON.stringify(CONFIG));
   const saveState = () => localStorage.setItem(LS.STATE, JSON.stringify(STATE));
-  function touchConfig() { CONFIG.updatedAt = new Date().toISOString(); saveConfig(); schedulePush(); }
-  function touchState() { STATE.updatedAt = new Date().toISOString(); saveState(); schedulePush(); }
+  // "dirty" = este dispositivo tem alterações ainda não enviadas ao GitHub
+  function markDirty(doc) { doc.ver++; localStorage.setItem(doc.dirtyKey, "1"); }
+  function touchConfig() { CONFIG.updatedAt = new Date().toISOString(); saveConfig(); markDirty(DOCS[0]); schedulePush(); }
+  function touchState() { STATE.updatedAt = new Date().toISOString(); saveState(); markDirty(DOCS[1]); schedulePush(); }
   GA.touchConfig = touchConfig; GA.touchState = touchState;
 
   // ---------------- acesso (token) ----------------
@@ -93,7 +100,7 @@
   GA.wipeLocalData = function () {
     gen++;
     CONFIG = defaultConfig(); STATE = defaultState();
-    [LS.CONFIG, LS.STATE, LS.LOADED, LS.CLASS].forEach((k) => localStorage.removeItem(k));
+    [LS.CONFIG, LS.STATE, LS.LOADED, LS.CLASS, LS.SHA_CONFIG, LS.SHA_STATE, LS.DIRTY_CONFIG, LS.DIRTY_STATE].forEach((k) => localStorage.removeItem(k));
   };
   GA.disconnect = function () {
     localStorage.removeItem(LS.SYNC);
@@ -282,30 +289,52 @@
     }
     return res.json();
   }
-  // conflito de versão (outro dispositivo gravou entretanto): relê o sha e repete
-  async function pushRetry(cfg, path, dataFn, sha, attempt) {
-    attempt = attempt || 1;
-    try { return await push(cfg, path, dataFn(), sha); }
-    catch (err) {
-      if (!(/does not match|sha/i.test(err.message) || err.status === 409 || err.status === 422) || attempt > 3) throw err;
-      const fresh = await pull(cfg, path);
-      return pushRetry(cfg, path, dataFn, fresh.sha, attempt + 1);
-    }
-  }
-
   const DOCS = [
-    { path: FILES.config, get: () => CONFIG, adopt: (r) => { CONFIG = normalizeConfig(r); saveConfig(); } },
-    { path: FILES.state, get: () => STATE, adopt: (r) => { STATE = normalizeState(r); saveState(); } },
+    { key: "config", path: FILES.config, shaKey: LS.SHA_CONFIG, dirtyKey: LS.DIRTY_CONFIG, ver: 0,
+      get: () => CONFIG, adopt: (r) => { CONFIG = normalizeConfig(r); saveConfig(); } },
+    { key: "state", path: FILES.state, shaKey: LS.SHA_STATE, dirtyKey: LS.DIRTY_STATE, ver: 0,
+      get: () => STATE, adopt: (r) => { STATE = normalizeState(r); saveState(); } },
   ];
-  // ganha sempre a versão mais recente (updatedAt)
+
+  // Regra: o que decide NÃO é a hora dos relógios, mas se o ficheiro no GitHub
+  // mudou desde a última vez que o vimos (sha) e se este dispositivo tem
+  // alterações por enviar (dirty).
+  //   • GitHub igual ao último visto + alterações locais  -> envia
+  //   • GitHub mudou + nada por enviar aqui               -> adota o do GitHub
+  //   • GitHub mudou + alterações aqui (conflito)         -> fica o mais recente
   async function syncDoc(cfg, doc, myGen) {
-    const { remote, sha } = await pull(cfg, doc.path);
-    if (myGen !== gen) return "stale"; // entretanto desligámos / mudámos de repositório
-    const localT = doc.get().updatedAt || EPOCH;
-    const remoteT = (remote && remote.updatedAt) || EPOCH;
-    if (remote && remoteT > localT) { doc.adopt(remote); return "pulled"; }
-    if (!remote || localT > remoteT) { await pushRetry(cfg, doc.path, () => doc.get(), sha); return "pushed"; }
-    return "same";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const { remote, sha } = await pull(cfg, doc.path);
+      if (myGen !== gen) return "stale"; // entretanto desligámos / mudámos de repositório
+      const base = localStorage.getItem(doc.shaKey);
+      const local = doc.get();
+      const localT = local.updatedAt || EPOCH;
+      const remoteT = (remote && remote.updatedAt) || EPOCH;
+      let dirty = localStorage.getItem(doc.dirtyKey) === "1";
+
+      if (remote) {
+        if (!base && !dirty && localT > remoteT) dirty = true; // cache de versões antigas, sem registo de sincronização
+        if (sha === base) { if (!dirty) return "same"; }
+        else if (!dirty || localT < remoteT) {
+          doc.adopt(remote); localStorage.setItem(doc.shaKey, sha); localStorage.removeItem(doc.dirtyKey);
+          return "pulled";
+        }
+      }
+      // enviar: ficheiro ainda não existe, GitHub inalterado, ou conflito em que o local é mais recente
+      const ver = doc.ver;
+      try {
+        const res = await push(cfg, doc.path, local, remote ? sha : null);
+        if (myGen !== gen) return "stale";
+        if (res && res.content && res.content.sha) localStorage.setItem(doc.shaKey, res.content.sha);
+        else localStorage.removeItem(doc.shaKey);
+        if (doc.ver === ver) localStorage.removeItem(doc.dirtyKey); // se entretanto houve nova alteração, continua por enviar
+        return "pushed";
+      } catch (err) {
+        const conflict = /does not match|sha/i.test(err.message) || err.status === 409 || err.status === 422;
+        if (!conflict || attempt === 3) throw err;
+        // alguém gravou entretanto: volta a ler e decide de novo
+      }
+    }
   }
 
   let inFlight = false, queued = null, pushTimer = null;
@@ -313,6 +342,11 @@
     if (inFlight) { queued = showToast || queued; return; }
     const cfg = GA.loadSyncCfg();
     if (!cfg || !cfg.repo || !cfg.token) { setStatus("off"); return; }
+    if (!/^[^/\s]+\/[^/\s]+$/.test(cfg.repo)) {
+      setStatus("error");
+      if (showToast) GA.toast("Repositório inválido: usa o formato utilizador/repositório (ex: o-teu-user/gimnoanima-dados).");
+      return;
+    }
     inFlight = true; setStatus("syncing");
     const myGen = gen;
     try {
@@ -326,7 +360,9 @@
       console.error("[Gimnoanima sync]", err);
       setStatus("error");
       GA.emit("data-changed");
-      if (showToast) GA.toast("Falha na sincronização: " + err.message);
+      if (showToast) GA.toast(err instanceof TypeError
+        ? "Não foi possível contactar o GitHub. Confirma o repositório (utilizador/repositório) e a ligação à internet."
+        : "Falha na sincronização: " + err.message);
     } finally {
       inFlight = false;
       if (queued !== null) { const t = queued; queued = null; GA.syncNow(t); }
